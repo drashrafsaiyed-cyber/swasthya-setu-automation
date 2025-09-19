@@ -1,85 +1,72 @@
 import os
 import requests
-import base64
+from io import BytesIO
+from PIL import Image
 from datetime import datetime
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-
-def fetch_health_news():
-    """Fetch top health headlines (fallback if API not available)."""
-    if not NEWS_API_KEY:
-        return "Donate blood, save lives. Stay healthy together."
-    url = "https://newsapi.org/v2/top-headlines"
-    params = {"category": "health", "language": "en", "pageSize": 3, "apiKey": NEWS_API_KEY}
-    try:
-        r = requests.get(url, params=params, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        headlines = [a["title"] for a in data.get("articles", []) if a.get("title")]
-        return " • ".join(headlines)[:500]
-    except Exception as e:
-        print("News error:", e)
-        return "Health news updates unavailable today."
 
 def generate_poster(news_text):
-    """Generate a poster image and return URL or base64 upload."""
     prompt = f"""
-Design a bold, modern A3 health awareness poster for SWASTHYA SETU CHARITABLE TRUST.
+    Create a professional A3 health awareness poster for SWASTHYA SETU CHARITABLE TRUST.
 
-1. Always place the SWASTHYA SETU CHARITABLE TRUST logo (blue bridge, red heart with cross, and green hands) at the top center of the poster.
-2. Use clean white background with strong red and blue typography.
-3. Blend **vector-style icons** (health, blood donation, medical equipment) with **realistic illustrations** to look professional and engaging.
-4. Headline: A powerful blood donation awareness title.
-5. Subtext: A short health awareness message combined with today's date ({datetime.now().strftime("%d %B %Y")}).
-6. Add current health/news updates: {news_text}.
-7. Maintain the same **size and layout style** as the provided reference posters.
-"""
-
+    - Clean vector + modern illustration style.
+    - Red and blue medical theme.
+    - Big headline encouraging blood donation.
+    - Subtext: health awareness + today's date ({datetime.now().strftime("%d %B %Y")}).
+    - Include small highlights from today's news: {news_text}.
+    - Leave space at the top for the organization's logo.
+    """
 
     url = "https://api.openai.com/v1/images/generations"
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    payload = {"model": "gpt-image-1", "prompt": prompt, "size": "1024x1024"}
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    payload = {
+        "model": "gpt-image-1",
+        "prompt": prompt,
+        "size": "1024x1536",   # vertical poster format
+        "quality": "high"
+    }
 
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
-    r.raise_for_status()
-    data = r.json()
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()["data"][0]["b64_json"]
 
-    # If URL is available
-    if "url" in data["data"][0]:
-        return data["data"][0]["url"]
+def add_logo(image_b64, logo_path="logo.png"):
+    poster = Image.open(BytesIO(base64.b64decode(image_b64))).convert("RGBA")
+    logo = Image.open(logo_path).convert("RGBA")
 
-    # If base64 is returned
-    if "b64_json" in data["data"][0]:
-        img_data = base64.b64decode(data["data"][0]["b64_json"])
-        # Upload to Telegram as a file (since no URL)
-        files = {"photo": ("poster.png", img_data)}
-        tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "caption": "🩸 Daily Poster — SWASTHYA SETU CHARITABLE TRUST"}
-        r = requests.post(tg_url, data=payload, files=files, timeout=60)
-        r.raise_for_status()
-        print("Poster sent via base64 upload ✅")
-        return None
+    # Resize logo
+    logo_width = poster.width // 4
+    ratio = logo_width / logo.width
+    logo_height = int(logo.height * ratio)
+    logo = logo.resize((logo_width, logo_height))
 
-    raise ValueError("No image returned from OpenAI")
+    # Place logo at top center
+    pos = ((poster.width - logo_width) // 2, 20)
+    poster.paste(logo, pos, logo)
 
-def send_to_telegram(image_url, caption):
-    """Send poster via URL (if available)."""
+    # Save final
+    output_path = "final_poster.png"
+    poster.save(output_path)
+    return output_path
+
+def send_to_telegram(image_path):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "photo": image_url, "caption": caption}
-    r = requests.post(url, data=payload, timeout=60)
-    r.raise_for_status()
-    return r.json()
+    with open(image_path, "rb") as img_file:
+        files = {"photo": img_file}
+        data = {"chat_id": TELEGRAM_CHAT_ID}
+        response = requests.post(url, data=data, files=files)
+        response.raise_for_status()
 
 if __name__ == "__main__":
-    news = fetch_health_news()
     try:
-        img_url = generate_poster(news)
-        if img_url:  # if URL-based
-            caption = f"🩸 Daily Blood Donation & Health Awareness Poster\nSWASTHYA SETU CHARITABLE TRUST\n\n📰 {news}"
-            send_to_telegram(img_url, caption)
-        print("Poster workflow complete ✅")
+        # fetch your news text earlier in the script
+        news_text = "Example health + community news headline"
+        image_b64 = generate_poster(news_text)
+        final_poster = add_logo(image_b64)
+        send_to_telegram(final_poster)
+        print("✅ Poster generated and sent with logo!")
     except Exception as e:
-        print("Error generating/sending poster:", e)
+        print("❌ Error generating/sending poster:", e)
