@@ -1,17 +1,17 @@
 import os
-import base64
 import requests
+import base64
 from io import BytesIO
 from PIL import Image
 from datetime import datetime
 
-# 🔑 Load secrets from GitHub Actions (from repository secrets)
+# 🔑 Load secrets from GitHub Actions
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
-# ✅ Fallback awareness tips if NewsAPI fails
+# ✅ Awareness fallback tips
 AWARENESS_TIPS = [
     "Drink water regularly to stay hydrated.",
     "Eat a balanced diet with fruits and vegetables.",
@@ -37,47 +37,63 @@ def fetch_news():
         return ", ".join(AWARENESS_TIPS[:3])
 
 def generate_poster(news_text):
-    """Generate poster image using OpenAI Images API"""
+    """Generate poster image using OpenAI Images API and return local file path"""
+    if not news_text or len(news_text.strip()) < 10:
+        news_text = ", ".join(AWARENESS_TIPS[:3])
+
     prompt = f"""
     Create a modern, professional A3 health awareness poster for SWASTHYA SETU CHARITABLE TRUST.
 
-    - Style: clean, vibrant, modern, infographic-style
+    - Style: clean, vibrant, modern, infographic-like
     - Theme: blood donation & health awareness
     - Use colorful vector graphics and engaging visuals
     - Add today's date: {datetime.now().strftime('%d %B %Y')}
     - Include these updates: {news_text}
+    - Leave blank space at the bottom-right corner for the official logo
     """
 
-    try:
-        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-        data = {
-            "model": "gpt-image-1",
-            "prompt": prompt,
-            "size": "1024x1536",  # portrait / A3 aspect
-            "quality": "high",
-            "response_format": "b64_json"
-        }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    data = {
+        "model": "gpt-image-1",
+        "prompt": prompt,
+        "size": "1024x1536",
+        "quality": "high"
+    }
 
-        response = requests.post("https://api.openai.com/v1/images/generations", headers=headers, json=data)
-        response.raise_for_status()
-        image_base64 = response.json()["data"][0]["b64_json"]
+    response = requests.post("https://api.openai.com/v1/images/generations", headers=headers, json=data)
+    response.raise_for_status()
+    result = response.json()
 
-        image_bytes = base64.b64decode(image_base64)
-        image = Image.open(BytesIO(image_bytes))
+    if "data" not in result or "url" not in result["data"][0]:
+        raise ValueError("Unexpected OpenAI response: " + str(result))
 
-        # ✅ Add the logo at bottom-right corner
-        if os.path.exists("logo.png"):
+    # Download the generated image
+    img_url = result["data"][0]["url"]
+    img_response = requests.get(img_url)
+    img_response.raise_for_status()
+
+    image = Image.open(BytesIO(img_response.content)).convert("RGBA")
+
+    # ✅ Overlay the logo
+    if os.path.exists("logo.png"):
+        try:
             logo = Image.open("logo.png").convert("RGBA")
-            logo = logo.resize((150, 150))  # adjust size
-            position = (image.width - logo.width - 30, image.height - logo.height - 30)
-            image.paste(logo, position, logo)
+            # Resize logo to ~15% of poster width
+            logo_width = image.width // 6
+            ratio = logo_width / logo.width
+            logo_height = int(logo.height * ratio)
+            logo = logo.resize((logo_width, logo_height))
 
-        output_path = "poster.png"
-        image.save(output_path)
-        return output_path
-    except Exception as e:
-        print("Error generating poster:", e)
-        return None
+            # Position: bottom-right corner with margin
+            position = (image.width - logo_width - 30, image.height - logo_height - 30)
+            image.paste(logo, position, logo)
+        except Exception as e:
+            print("⚠️ Could not add logo:", e)
+
+    # Save final poster
+    output_path = "final_poster.png"
+    image.save(output_path, "PNG")
+    return output_path
 
 def send_to_telegram(image_path, news_text):
     """Send the poster to Telegram"""
@@ -85,7 +101,12 @@ def send_to_telegram(image_path, news_text):
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         with open(image_path, "rb") as img:
             files = {"photo": img}
-            caption = f"🩸 Swasthya Setu Charitable Trust\n\n📅 {datetime.now().strftime('%d %B %Y')}\n\n📰 {news_text}\n\n#DonateBlood #HealthAwareness"
+            caption = (
+                f"🩸 Swasthya Setu Charitable Trust\n\n"
+                f"📅 {datetime.now().strftime('%d %B %Y')}\n\n"
+                f"📰 {news_text}\n\n"
+                "#DonateBlood #HealthAwareness"
+            )
             data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
             response = requests.post(url, files=files, data=data)
         response.raise_for_status()
