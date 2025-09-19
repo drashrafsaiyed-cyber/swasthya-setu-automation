@@ -27,12 +27,17 @@ def fetch_health_news():
 def generate_poster(news_text):
     """Generate a poster image and return URL or base64 upload."""
     prompt = f"""
-    Design a bold, modern A3 poster for SWASTHYA SETU CHARITABLE TRUST.
-    Theme: Blood Donation Awareness + Community Health Awareness.
-    Include today's date: {datetime.now().strftime("%d %B %Y")}.
-    Add short health headlines: {news_text}.
-    Style: clean, medical theme, strong red & white colors.
-    """
+Design a bold, modern A3 health awareness poster for SWASTHYA SETU CHARITABLE TRUST.
+
+1. Always place the SWASTHYA SETU CHARITABLE TRUST logo (blue bridge, red heart with cross, and green hands) at the top center of the poster.
+2. Use clean white background with strong red and blue typography.
+3. Blend **vector-style icons** (health, blood donation, medical equipment) with **realistic illustrations** to look professional and engaging.
+4. Headline: A powerful blood donation awareness title.
+5. Subtext: A short health awareness message combined with today's date ({datetime.now().strftime("%d %B %Y")}).
+6. Add current health/news updates: {news_text}.
+7. Maintain the same **size and layout style** as the provided reference posters.
+"""
+
 
     url = "https://api.openai.com/v1/images/generations"
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
